@@ -257,7 +257,7 @@ fn copy_files(files: &[PathBuf], target_dir: &PathBuf, pb: &ProgressBar) -> io::
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
-    use std::{io, path};
+    use std::path;
 
     #[test]
     fn file_stem() {

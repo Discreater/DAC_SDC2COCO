@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::PathBuf;
+use std::{fs, io};
 
-use xml::reader::XmlEvent;
+use xml::reader::{Events, XmlEvent};
 use xml::EventReader;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Annotataion {
     filename: String,
     size: Size,
@@ -55,13 +55,13 @@ impl Annotataion {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Size {
     width: usize,
     height: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Bndbox {
     xmin: usize,
     ymin: usize,
@@ -69,46 +69,70 @@ struct Bndbox {
     ymax: usize,
 }
 
-pub fn parse(file: &PathBuf, cls: super::Cls) -> std::io::Result<Annotataion> {
-    let file = fs::File::open(file)?;
+pub fn parse(file_path: &PathBuf, cls: super::Cls) -> std::io::Result<Annotataion> {
+    let file = fs::File::open(file_path)?;
     let parser = EventReader::new(file);
-    let content: Vec<_> = parser
-        .into_iter()
-        .filter_map(|p| {
-            if let Ok(XmlEvent::Characters(s)) = p {
-                Some(s)
-            } else {
-                None
+
+    let mut iter = parser.into_iter();
+
+    let mut anno = Annotataion::default();
+    while let Some(next) = iter.next() {
+        let next = next.unwrap();
+        if let XmlEvent::StartElement { name, .. } = next {
+            match &name.local_name[..] {
+                "filename" => {
+                    anno.filename = get_next_characters(&mut iter, file_path);
+                }
+                "width" => {
+                    anno.size.width = get_next_characters(&mut iter, file_path).parse().unwrap();
+                }
+                "height" => {
+                    anno.size.height = get_next_characters(&mut iter, file_path).parse().unwrap();
+                }
+                "name" => {
+                    anno.object_name = cls
+                        .get_name(&get_next_characters(&mut iter, file_path))
+                        .to_owned();
+                }
+                "xmin" => {
+                    anno.bndbox.xmin = get_next_characters(&mut iter, file_path).parse().unwrap();
+                }
+                "xmax" => {
+                    anno.bndbox.xmax = get_next_characters(&mut iter, file_path).parse().unwrap();
+                }
+                "ymin" => {
+                    anno.bndbox.ymin = get_next_characters(&mut iter, file_path).parse().unwrap();
+                }
+                "ymax" => {
+                    anno.bndbox.ymax = get_next_characters(&mut iter, file_path).parse().unwrap();
+                }
+                _ => {}
             }
-        })
-        .collect();
-    let mut iter = content.into_iter();
-
-    let annotation = Annotataion {
-        filename: iter.next().unwrap(),
-        size: Size {
-            height: iter.next().unwrap().parse().unwrap(),
-            width: iter.next().unwrap().parse().unwrap(),
-        },
-        object_name: cls.get_name(&iter.next().unwrap()).to_owned(),
-        bndbox: Bndbox {
-            xmin: iter.next().unwrap().parse().unwrap(),
-            ymin: iter.next().unwrap().parse().unwrap(),
-            xmax: iter.next().unwrap().parse().unwrap(),
-            ymax: iter.next().unwrap().parse().unwrap(),
-        },
-    };
-
-    Ok(annotation)
+        }
+    }
+    Ok(anno)
 }
 
+fn get_next_characters<T: io::Read>(iter: &mut Events<T>, file_path: &PathBuf) -> String {
+    loop {
+        let next = iter.next();
+        if let Some(Ok(XmlEvent::Characters(s))) = next {
+            break s;
+        } else if next == None {
+            panic!("paring error, file: {:?}", file_path);
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
-    use xml::reader::{Error, EventReader, XmlEvent};
+    use std::path::PathBuf;
 
-    #[test]
-    fn serde_xml() {
-        let xml = r##"
+    use xml::reader::{EventReader, XmlEvent};
+
+    use crate::Cls;
+
+    use super::{get_next_characters, Annotataion};
+    const XML: &'static str = r##"
             <annotation>
                 <filename>720 (13)_0001</filename>
                 <size>
@@ -126,7 +150,63 @@ mod tests {
                 </object>
             </annotation>
         "##;
-        let parser = EventReader::new(xml.as_bytes());
+
+    #[test]
+    fn anno_parse() {
+        let file_path = &PathBuf::new().join("a/b");
+        let cls = Cls::Single;
+        let parser = EventReader::new(XML.as_bytes());
+
+        let mut iter = parser.into_iter();
+
+        let mut anno = Annotataion::default();
+        while let Some(next) = iter.next() {
+            if let Ok(XmlEvent::StartElement { name, .. }) = next {
+                println!("{:?}", name);
+                match &name.local_name[..] {
+                    "filename" => {
+                        anno.filename = get_next_characters(&mut iter, file_path);
+                    }
+                    "width" => {
+                        anno.size.width =
+                            get_next_characters(&mut iter, file_path).parse().unwrap();
+                    }
+                    "height" => {
+                        anno.size.height =
+                            get_next_characters(&mut iter, file_path).parse().unwrap();
+                    }
+                    "name" => {
+                        anno.object_name = cls
+                            .get_name(&get_next_characters(&mut iter, file_path))
+                            .to_owned();
+                    }
+                    "xmin" => {
+                        anno.bndbox.xmin =
+                            get_next_characters(&mut iter, file_path).parse().unwrap();
+                    }
+                    "xmax" => {
+                        anno.bndbox.xmax =
+                            get_next_characters(&mut iter, file_path).parse().unwrap();
+                    }
+                    "ymin" => {
+                        anno.bndbox.ymin =
+                            get_next_characters(&mut iter, file_path).parse().unwrap();
+                    }
+                    "ymax" => {
+                        anno.bndbox.ymax =
+                            get_next_characters(&mut iter, file_path).parse().unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        dbg!(anno);
+    }
+
+    #[test]
+    fn serde_xml() {
+        let parser = EventReader::new(XML.as_bytes());
         let mut depth = 0;
         for e in parser {
             match e {
